@@ -8,6 +8,15 @@ setup_admin_user() {
 
   log "INFO" "Настройка безопасной учётной записи администратора"
 
+  # Предложить пользователю отказаться от настройки
+  read -rp "Создать/настроить администратора (рекомендуется)? [Y/n]: " confirm
+  confirm="${confirm,,}" # to lowercase
+
+  if [[ "$confirm" == "n" || "$confirm" == "no" ]]; then
+    log "WARN" "Создание пользователя администратора пропущено по выбору пользователя"
+    return
+  fi
+
   if [[ -z "$ADMIN_USER" ]]; then
     read -rp "Введите имя нового администратора [adminuser]: " input_user
     ADMIN_USER="${input_user:-adminuser}"

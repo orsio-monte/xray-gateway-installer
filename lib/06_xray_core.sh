@@ -195,7 +195,15 @@ xray_create_sample_configs() {
   fi
 
   if ! cat > "$json_log" <<EOF
-{"log":{"access":"$XRAY_LOG_PATH/access.log","error":"$XRAY_LOG_PATH/error.log","loglevel":"info","dnsLog":true,"maskAddress":"quarter"}}
+{
+    "log": {
+        "access": "$XRAY_LOG_PATH/access.log",
+        "error": "$XRAY_LOG_PATH/error.log",
+        "loglevel": "info",
+        "dnsLog": true,
+        "maskAddress": "quarter"
+    }
+}
 EOF
   then
     log "ERROR" "Ошибка записи в файл: $json_log"
@@ -210,7 +218,28 @@ EOF
   fi
 
   if ! cat > "$json_policy" <<EOF
-{"policy":{"levels":{"0":{"handshake":4,"connIdle":300,"uplinkOnly":2,"downlinkOnly":5,"statsUserUplink":false,"statsUserDownlink":false,"statsUserOnline":false,"bufferSize":4}},"system":{"statsInboundUplink":false,"statsInboundDownlink":false,"statsOutboundUplink":false,"statsOutboundDownlink":false}}}
+{
+    "policy": {
+        "levels": {
+            "0": {
+                "handshake": 4,
+                "connIdle": 300,
+                "uplinkOnly": 2,
+                "downlinkOnly": 5,
+                "statsUserUplink": false,
+                "statsUserDownlink": false,
+                "statsUserOnline": false,
+                "bufferSize": 4
+            }
+        },
+        "system": {
+            "statsInboundUplink": false,
+            "statsInboundDownlink": false,
+            "statsOutboundUplink": false,
+            "statsOutboundDownlink": false
+        }
+    }
+}
 EOF
   then
     log "ERROR" "Ошибка записи в файл: $json_policy"
@@ -225,7 +254,51 @@ EOF
   fi
 
   if ! cat > "$json_inbounds" <<EOF
-{"inbounds":[{"port":12345,"protocol":"dokodemo-door","settings":{"network":"tcp,udp","followRedirect":true},"streamSettings":{"sockopt":{"tproxy":"tproxy","mark":1}},"sniffing":{"enabled":true,"destOverride":["http","tls","quic"]},"tag":"tproxy"},{"port":12346,"protocol":"dokodemo-door","settings":{"network":"tcp","followRedirect":true,"mark":1},"sniffing":{"enabled":true,"destOverride":["http","tls","quic"]},"tag":"redirect"}]}
+{
+    "inbounds": [
+        {
+            "port": 12345,
+            "protocol": "dokodemo-door",
+            "settings": {
+                "network": "tcp,udp",
+                "followRedirect": true
+            },
+            "streamSettings": {
+                "sockopt": {
+                    "tproxy": "tproxy",
+                    "mark": 1
+                }
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": [
+                    "http",
+                    "tls",
+                    "quic"
+                ]
+            },
+            "tag": "tproxy"
+        },
+        {
+            "port": 12346,
+            "protocol": "dokodemo-door",
+            "settings": {
+                "network": "tcp",
+                "followRedirect": true,
+                "mark": 1
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": [
+                    "http",
+                    "tls",
+                    "quic"
+                ]
+            },
+            "tag": "redirect"
+        }
+    ]
+}
 EOF
   then
     log "ERROR" "Ошибка записи в файл: $json_inbounds"

@@ -25,7 +25,7 @@ IPTABLE_RESTART_UNIT_NAME="xray-iptables-restart.service"
 IPTABLE_RESTART_UNIT_PATH="/etc/systemd/system/$IPTABLE_RESTART_UNIT_NAME"
 
 ADMIN_EXTRA_GROUPS=("sudo" "adm" "nogroup" "$XRAY_USER_GROUP")
-SKIP_ADMIN_USER_SETUP="true" #пропуск создания пользователя
+SKIP_ADMIN_USER_SETUP="false" #пропуск создания пользователя
 ADMIN_USER=""  # Новый пользователь с sudo-доступом
 ADMIN_SSH_KEY=""  # Публичный ключ SSH
 
@@ -122,24 +122,24 @@ main() {
   done
   log SEP
 
-  # check_os_version
-  # detect_interfaces
-  # install_packages
-  # dump_all_interfaces
-  # configure_grub
-  # setup_admin_user
-  # configure_sysctl
-  # force_use_iptables_legacy
-  # disable_conflicting_services
-  # xray_create_user_and_dirs
-  # xray_install
-  # xray_override_systemd_unit
-  # xray_create_sample_configs
-  # xray_setup_log_rotation
-  # generate_xray_iptables_script
+  check_os_version
+  detect_interfaces
+  install_packages
+  dump_all_interfaces
+  configure_grub
+  setup_admin_user
+  configure_sysctl
+  force_use_iptables_legacy
+  disable_conflicting_services
+  xray_create_user_and_dirs
+  xray_install
+  xray_override_systemd_unit
+  xray_create_sample_configs
+  xray_setup_log_rotation
+  generate_xray_iptables_script
   generate_xray_dat_update
-  # xray_enable_and_start
-  # xray_print_final_info
+  xray_enable_and_start
+  xray_print_final_info
   log "TITLE" "Завершение скрипта"
 }
 
