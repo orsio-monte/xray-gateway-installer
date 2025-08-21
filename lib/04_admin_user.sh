@@ -30,7 +30,33 @@ setup_admin_user() {
   log "OK" "Пользователь $ADMIN_USER настроен. root отключён"
 }
 
+ensure_groups_exist() {
+  local grp
+  for grp in "${ADMIN_EXTRA_GROUPS[@]}"; do
+    if getent group "$grp" >/dev/null; then
+      continue
+    fi
+
+    if [[ "$grp" == "$XRAY_USER_GROUP" ]]; then
+      if groupadd -g "$XRAY_GID" "$grp"; then
+        log "OK" "Создана отсутствующая группа: $grp"
+      else
+        log "ERROR" "Не удалось создать группу $grp"
+        exit 1
+      fi
+    else
+      if groupadd "$grp"; then
+        log "OK" "Создана отсутствующая группа: $grp"
+      else
+        log "ERROR" "Не удалось создать группу $grp"
+        exit 1
+      fi
+    fi
+  done
+}
+
 create_or_update_admin_user() {
+  ensure_groups_exist
   local group_list
   group_list="$(IFS=,; echo "${ADMIN_EXTRA_GROUPS[*]}")"
 

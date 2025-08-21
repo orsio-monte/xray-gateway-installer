@@ -3,18 +3,28 @@
 xray_create_user_and_dirs() {
   log "INFO" "Создание пользователя $XRAY_USER и директорий Xray"
 
-	if ! getent passwd "$XRAY_USER" > /dev/null; then
-	  log "INFO" "Создание системного пользователя $XRAY_USER с GID $XRAY_GID"
-	  if groupadd -g "$XRAY_GID" "$XRAY_USER_GROUP" && \
-		useradd -r -M -s /usr/sbin/nologin -u "$XRAY_GID" -g "$XRAY_USER_GROUP" "$XRAY_USER"; then
-		log "OK" "Пользователь $XRAY_USER создан"
-	  else
-		log "ERROR" "Не удалось создать пользователя $XRAY_USER"
-		exit 1
-	  fi
-	else
-	  log "INFO" "Пользователь $XRAY_USER уже существует"
-	fi
+  if ! getent group "$XRAY_USER_GROUP" >/dev/null; then
+    if groupadd -g "$XRAY_GID" "$XRAY_USER_GROUP"; then
+      log "OK" "Группа $XRAY_USER_GROUP создана"
+    else
+      log "ERROR" "Не удалось создать группу $XRAY_USER_GROUP"
+      exit 1
+    fi
+  else
+    log "INFO" "Группа $XRAY_USER_GROUP уже существует"
+  fi
+
+  if ! getent passwd "$XRAY_USER" > /dev/null; then
+    log "INFO" "Создание системного пользователя $XRAY_USER с GID $XRAY_GID"
+    if useradd -r -M -s /usr/sbin/nologin -u "$XRAY_GID" -g "$XRAY_USER_GROUP" "$XRAY_USER"; then
+      log "OK" "Пользователь $XRAY_USER создан"
+    else
+      log "ERROR" "Не удалось создать пользователя $XRAY_USER"
+      exit 1
+    fi
+  else
+    log "INFO" "Пользователь $XRAY_USER уже существует"
+  fi
 
 	# Добавление в группы — всегда
 	if [[ "${#XRAY_EXTRA_GROUPS[@]}" -gt 0 ]]; then
