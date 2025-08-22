@@ -1,6 +1,8 @@
 #!/bin/bash
 
 set -euo pipefail
+umask 022
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 XRAY_SERVICE="xray"
 XRAY_FOLDER="__XRAY_FOLDER__"
@@ -8,8 +10,10 @@ XRAY_DAT_PATH="$XRAY_FOLDER/dat"
 XRAY_DATCHECK_DIR="$XRAY_FOLDER/dat-check"
 ETAG_DIR="$XRAY_DATCHECK_DIR/etag"
 HASH_DIR="$XRAY_DATCHECK_DIR/hash"
-TMP_DIR="$XRAY_DATCHECK_DIR/tmp"
+# TMP_DIR будет создан динамически через mktemp ниже
+# shellcheck disable=SC2034
 XRAY_USER="__XRAY_USER__"
+# shellcheck disable=SC2034
 XRAY_USER_GROUP="__XRAY_USER_GROUP__"
 
 script_path="$(realpath "$0")"
@@ -38,7 +42,7 @@ logs() {
   local color reset timestamp
   timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
   reset='\033[0m'
-  local log_file="${SCRIPT_DIR:-.}/install.log"
+  local log_file="$log_path"
   local module="${MODULE_NAME:-$(realpath "$0" 2>/dev/null || echo "$0")}"
 
   case "$level" in
@@ -67,180 +71,223 @@ logs() {
   echo "[${timestamp}] [$level] [$module] [$caller] $*" >> "$log_file"
 }
 
+# === Глобальная блокировка от параллельных запусков ===
+mkdir -p "$XRAY_DATCHECK_DIR"
+exec 9>"$XRAY_DATCHECK_DIR/.lock"
+if ! flock -n 9; then
+  echo "[WARN] Another instance is running; exiting." >&2
+  exit 0
+fi
+
 xray_dat_schedule_cron() {
-    local cronline
-    echo -e "\n Настройка автоматического обновления GeoIP/GeoSite"
+  echo -e "\n Настройка автоматического обновления GeoIP/GeoSite"
+  cat <<'MENU'
+  Выберите день недели:
+     0. Отмена
+     1. Понедельник
+     2. Вторник
+     3. Среда
+     4. Четверг
+     5. Пятница
+     6. Суббота
+     7. Воскресенье
+     8. Ежедневно
+     9. Удалить задачу из cron
+MENU
 
-    echo "  Выберите день недели:"
-    echo "     0. Отмена"
-    echo "     1. Понедельник"
-    echo "     2. Вторник"
-    echo "     3. Среда"
-    echo "     4. Четверг"
-    echo "     5. Пятница"
-    echo "     6. Суббота"
-    echo "     7. Воскресенье"
-    echo "     8. Ежедневно"
-    echo "     9. Удалить задачу из cron"
-    echo
+  local day_choice hour minute day_of_week cron_expr
+  while true; do
+    read -rp "  Ваш выбор: " day_choice
+    [[ "$day_choice" =~ ^[0-9]$ ]] && break
+    echo "  ❌ Некорректный ввод. Введите число от 0 до 9."
+  done
 
-    local day_choice hour minute day_of_week cron_expr
-    while true; do
-        read -rp "  Ваш выбор: " day_choice
-        [[ "$day_choice" =~ ^[0-9]$ ]] && break
-        echo "  ❌ Некорректный ввод. Введите число от 0 до 9."
-    done
+  if [[ "$day_choice" == "0" ]]; then
+    logs INFO "Отменено пользователем"
+    return
+  fi
 
-    if [[ "$day_choice" == "9" ]]; then
-        logs INFO "Попытка удалить cron-задачу для: $script_path"
-
-        tmp_cron="$(mktemp)"
-        crontab -l 2>/dev/null | grep -vF "$script_path" > "$tmp_cron" || true
-        crontab "$tmp_cron"
-        rm -f "$tmp_cron"
-
-        if crontab -l 2>/dev/null | grep -Fq "$script_path"; then
-            logs ERR "❌ Не удалось удалить cron-задачу: $script_path"
-        else
-            logs OK "🗑 Cron-задача удалена (если была): $script_path"
-        fi
-
-        return
-    fi
-
-
-    if [[ "$day_choice" -eq 0 ]]; then
-        echo "  ⚠ Автообновление не будет добавлено в cron"
-        return
-    fi
-
-    read -rp "  Введите час запуска (0-23): " hour
-    while [[ ! "$hour" =~ ^[0-9]+$ || "$hour" -lt 0 || "$hour" -gt 23 ]]; do
-        echo "  ❌ Некорректный час. Повторите ввод."
-        read -rp "  Введите час (0-23): " hour
-    done
-
-    read -rp "  Введите минуту запуска (0-59): " minute
-    while [[ ! "$minute" =~ ^[0-9]+$ || "$minute" -lt 0 || "$minute" -gt 59 ]]; do
-        echo "  ❌ Некорректные минуты. Повторите ввод."
-        read -rp "  Введите минуты (0-59): " minute
-    done
-
-    if [[ "$day_choice" -eq 8 ]]; then
-        cron_expr="$minute $hour * * *"
-    else
-        [[ "$day_choice" -eq 7 ]] && day_of_week=0 || day_of_week=$day_choice
-        cron_expr="$minute $hour * * $day_of_week"
-    fi
-
-    cronline="$cron_expr $script_path >> $log_path 2>&1"
-
-    # Добавление в cron
-    logs "INFO" "script_path = $script_path"
-    logs "INFO" "Будет добавлено в crontab: $cronline"
-
+  if [[ "$day_choice" == "9" ]]; then
+    logs INFO "Удаляю cron-задачи для: $script_path"
+    local tmp_cron
     tmp_cron="$(mktemp)"
-    
-    # Удаляем строки, содержащие полный путь скрипта (а не только имя!)
     crontab -l 2>/dev/null | grep -vF "$script_path" > "$tmp_cron" || true
-
-    echo "$cronline" >> "$tmp_cron"
-
-    if crontab "$tmp_cron"; then
-        logs "OK" "crontab успешно обновлён"
-    else
-        logs "ERR" "Не удалось установить crontab"
-        rm -f "$tmp_cron"
-        return 1
-    fi
-
+    crontab "$tmp_cron" || { logs ERR "Не удалось применить crontab"; rm -f "$tmp_cron"; return 1; }
     rm -f "$tmp_cron"
+    logs OK "Задачи удалены (если были)"
+    return
+  fi
 
-    if crontab -l | grep -Fq "$script_path"; then
-        full_line=$(crontab -l | grep -F "$script_path")
-        logs "OK" "Cron-задача успешно добавлена"
-        logs "INFO" "Cron-строка: $full_line"
-    else
-        logs "ERR" "Ошибка: cron-задача не добавлена"
-        return
-    fi
+  read -rp "  Час (0–23): " hour
+  read -rp "  Минута (0–59): " minute
+  [[ "$hour" =~ ^([01]?[0-9]|2[0-3])$ ]] || { logs ERR "Неверный час"; return 1; }
+  [[ "$minute" =~ ^([0-5]?[0-9])$ ]] || { logs ERR "Неверная минута"; return 1; }
 
+  case "$day_choice" in
+    1) day_of_week=1;;
+    2) day_of_week=2;;
+    3) day_of_week=3;;
+    4) day_of_week=4;;
+    5) day_of_week=5;;
+    6) day_of_week=6;;
+    7) day_of_week=0;; # в crontab 0=воскресенье
+    8) day_of_week="*";;
+    *) logs ERR "Неожиданный выбор"; return 1;;
+  esac
+
+  # безопасно экранируем путь, добавим окружение для cron
+  local qpath
+  qpath="$(printf '%q' "$script_path")"
+  cron_expr="$minute $hour * * $day_of_week $qpath"
+
+  {
+    crontab -l 2>/dev/null | grep -vF "$script_path" || true
+    echo "SHELL=/bin/bash"
+    echo "PATH=/usr/sbin:/usr/bin:/sbin:/bin"
+    echo "$cron_expr"
+  } | crontab -
+
+  if crontab -l | grep -Fq "$script_path"; then
+    logs OK "crontab успешно обновлён"
+    local full_line
+    full_line="$(crontab -l | grep -F "$script_path" || true)"
+    [[ -n "$full_line" ]] && logs INFO "Cron-строка: $full_line" || logs WARN "Не нашёл cron-строку после установки"
+  else
+    logs ERR "Не удалось установить crontab"
+    return 1
+  fi
+}
+
+cleanup() {
+  [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR"
+}
+
+update_file() {
+  local filename="$1" url="$2"
+  local tmpfile="$TMP_DIR/$filename"
+  local localfile="$XRAY_DAT_PATH/$filename"
+  local etag_file="$ETAG_DIR/.etag-$filename"
+  local hash_file="$HASH_DIR/.hash-$filename"
+  local header_file="$TMP_DIR/header-$filename"
+
+  local etag http_status etag_server current_hash old_hash curl_rc
+  etag="$(cat "$etag_file" 2>/dev/null || true)"
+
+  # Собираем аргументы curl
+  local -a curl_args=(-sS -L --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors \
+                      -w "%{http_code}" -D "$header_file" -o "$tmpfile" "$url")
+  if [[ -n "${etag:-}" ]]; then
+    curl_args=( -H "If-None-Match: $etag" "${curl_args[@]}" )
+  fi
+
+  # Выполняем curl и отдельно берём код возврата и http-код
+  set +e
+  http_status="$(curl "${curl_args[@]}")"
+  curl_rc=$?
+  set -e
+
+  if (( curl_rc != 0 )); then
+    logs WARN "Сетевая ошибка curl (rc=$curl_rc) для $filename"
+    rm -f "$tmpfile" "$header_file"
+    return 1
+  fi
+
+  # Берём ПОСЛЕДНИЙ ETag из всех блоков заголовков (после редиректов)
+  etag_server="$(
+    awk '
+      tolower($1)=="etag:"{
+        $1="";
+        sub(/^[ \t]+/,"");
+        gsub(/"/,"");
+        sub(/^W\//,"");
+        last=$0
+      }
+      END{ if(length(last)) print last }
+    ' "$header_file"
+  )"
+
+  old_hash="$(cat "$hash_file" 2>/dev/null || true)"
+
+  case "$http_status" in
+    200)
+      current_hash="$(sha256sum "$tmpfile" 2>/dev/null | cut -d" " -f1 || true)"
+      if [[ -n "$etag_server" && "$etag_server" == "$etag" && -n "$current_hash" && "$current_hash" == "$old_hash" ]]; then
+        logs INFO "ПРОПУЩЕНО: $filename — ETag и хеш совпадают"
+        rm -f "$tmpfile" "$header_file"
+        return 1
+      fi
+      [[ -n "$etag_server" && "$etag_server" == "$etag" && -n "$current_hash" && "$current_hash" != "$old_hash" ]] \
+        && logs WARN "ETag совпадает, но хеш отличается для $filename — обновляем"
+
+      mv "$tmpfile" "$localfile"
+      if [[ -n "${XRAY_USER:-}" && -n "${XRAY_USER_GROUP:-}" ]] && id -u "$XRAY_USER" >/dev/null 2>&1; then
+        chown "$XRAY_USER:$XRAY_USER_GROUP" "$localfile" || true
+      fi
+      [[ -n "$etag_server" ]] && echo "$etag_server" > "$etag_file" || :
+      [[ -n "$current_hash" ]] && echo "$current_hash" > "$hash_file" || :
+      logs OK "ОБНОВЛЕНО: $filename"
+      return 0
+      ;;
+    304)
+      logs INFO "ПРОПУЩЕНО: $filename — HTTP 304 (не изменено)"
+      rm -f "$tmpfile" "$header_file"
+      return 1
+      ;;
+    404)
+      logs ERR "Файл не найден (404) для $filename"
+      rm -f "$tmpfile" "$header_file" "$etag_file"
+      return 1
+      ;;
+    *)
+      logs WARN "Неожиданный статус HTTP $http_status для $filename"
+      rm -f "$tmpfile" "$header_file"
+      return 1
+      ;;
+  esac
 }
 
 main() {
-    if [[ "${1:-}" == "-ci" ]]; then
-        xray_dat_schedule_cron
-        logs SEP
-        logs TITLE "Полное текущее содержимое crontab:"
-        crontab -l | while read -r line; do
-            logs INFO "$line"
-        done
-        logs SEP
-    fi
-
-    mkdir -p "$TMP_DIR" "$XRAY_DAT_PATH" "$ETAG_DIR" "$HASH_DIR"
-    updated=0
-
-    for filename in "${!FILES[@]}"; do
-    url="${FILES[$filename]}"
-    tmpfile="$TMP_DIR/$filename"
-    localfile="$XRAY_DAT_PATH/$filename"
-    etag_file="$ETAG_DIR/.etag-$filename"
-    hash_file="$HASH_DIR/.hash-$filename"
-    header_file="$TMP_DIR/header-$filename"
-
-    etag=$(cat "$etag_file" 2>/dev/null || echo "")
-    http_status=$(curl -sS -L \
-      --connect-timeout 10 \
-      --max-time 30 \
-      -H "If-None-Match: $etag" \
-      -w "%{http_code}" \
-      -D "$header_file" \
-      -o "$tmpfile" \
-      "$url")
-
-    etag_server=$(grep -i '^ETag:' "$header_file" | cut -d' ' -f2 | tr -d '\r"')
-    current_hash=$(sha256sum "$tmpfile" 2>/dev/null | cut -d' ' -f1)
-    old_hash=$(cat "$hash_file" 2>/dev/null || echo "")
-
-    if [[ "$http_status" == "200" ]]; then
-      if [[ "$etag_server" == "$etag" && "$current_hash" == "$old_hash" ]]; then
-        logs "INFO" "ПРОПУЩЕНО: $filename — ETag и хеш совпадают"
-        rm -f "$tmpfile" "$header_file"
-        continue
-      fi
-      [[ "$etag_server" == "$etag" && "$current_hash" != "$old_hash" ]] && \
-        logs "WARN" "ETag совпадает, но хеш отличается для $filename — обновляем"
-
-      mv "$tmpfile" "$localfile"
-      echo "$etag_server" > "$etag_file"
-      echo "$current_hash" > "$hash_file"
-      logs "OK" "ОБНОВЛЕНО: $filename"
-      updated=1
-    elif [[ "$http_status" == "304" ]]; then
-      logs "INFO" "ПРОПУЩЕНО: $filename — HTTP 304 (не изменено)"
-      rm -f "$tmpfile" "$header_file"
-    elif [[ "$http_status" == "404" ]]; then
-      logs "ERROR" "Файл не найден (404) для $filename"
-      rm -f "$tmpfile" "$header_file" "$etag_file"
-    else
-      logs "WARN" "Неожиданный статус HTTP $http_status для $filename"
-      rm -f "$tmpfile" "$header_file"
-    fi
+  if [[ "${1:-}" == "-ci" ]]; then
+    xray_dat_schedule_cron
+    logs SEP
+    logs TITLE "Полное текущее содержимое crontab:"
+    crontab -l | while read -r line; do
+      logs INFO "$line"
     done
+    logs SEP
+  fi
 
-    rm -rf "$TMP_DIR"
+  # Базовые директории
+  mkdir -p "$XRAY_DAT_PATH" "$ETAG_DIR" "$HASH_DIR" "$XRAY_DATCHECK_DIR"
 
-    if [[ $updated -eq 1 ]]; then
-    logs "INFO" "Перезапуск службы Xray: $XRAY_SERVICE"
-    if systemctl restart "$XRAY_SERVICE"; then
-      logs "OK" "Обновление завершено, служба перезапущена"
-    else
-      logs "ERR" "Ошибка при перезапуске службы $XRAY_SERVICE"
+  # Временная директория в пределах XRAY_DATCHECK_DIR
+  TMP_DIR="$(mktemp -d "$XRAY_DATCHECK_DIR/tmp.XXXXXX")"
+
+  local updated=0
+
+  # Детерминированный порядок файлов
+  mapfile -t _keys < <(printf '%s\n' "${!FILES[@]}" | sort)
+  for filename in "${_keys[@]}"; do
+    if update_file "$filename" "${FILES[$filename]}"; then
+      updated=1
     fi
+  done
+
+  if [[ $updated -eq 1 ]]; then
+    logs INFO "Перезапуск службы Xray: $XRAY_SERVICE"
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q "^${XRAY_SERVICE}\.service"; then
+      if systemctl restart "$XRAY_SERVICE"; then
+        logs OK "Обновление завершено, служба перезапущена"
+      else
+        logs ERR "Ошибка при перезапуске службы $XRAY_SERVICE"
+      fi
     else
-        logs "INFO" "Все файлы актуальны. Перезапуск не требуется"
+      logs WARN "systemctl/юнит недоступны — пропускаю перезапуск"
     fi
+  else
+    logs INFO "Все файлы актуальны. Перезапуск не требуется"
+  fi
 }
 
+trap cleanup EXIT
 main "$@"

@@ -36,9 +36,19 @@ check_os_version() {
 install_packages() {
   log "INFO" "Установка необходимых пакетов..."
 
-  if ! command -v apt >/dev/null; then
+  if ! command -v apt >/dev/null 2>&1; then
     log "ERROR" "apt не найден. Скрипт поддерживает только Debian-подобные системы с APT"
     exit 1
+  fi
+
+  # Бэкап resolv.conf без изменения содержимого и с сохранением типа (файл/симлинк)
+  local resolv_backup
+  resolv_backup="$(mktemp /tmp/resolv.conf.backup.XXXXXX)"
+  if [ -e /etc/resolv.conf ]; then
+    cp -a /etc/resolv.conf "$resolv_backup"
+  else
+    # На всякий случай создадим пустую заглушку, чтобы логика восстановления была одинаковой
+    : > "$resolv_backup"
   fi
 
   export DEBIAN_FRONTEND=noninteractive
@@ -49,7 +59,35 @@ install_packages() {
     openssh-server openssh-client openssh-sftp-server && \
     apt autoremove -y
 
+  # Восстановление исходного /etc/resolv.conf (без промежуточных правок)
+  if [ -s "$resolv_backup" ] || [ -L "$resolv_backup" ]; then
+    # -aT сохранит права/типы, а -T гарантирует, что целевой путь трактуется как файл
+    cp -aT "$resolv_backup" /etc/resolv.conf
+  fi
+  rm -f "$resolv_backup"
+
+  # Обновим конфигурацию резолвера по возможности
+  if command -v resolvconf >/dev/null 2>&1; then
+    resolvconf -u || true
+  else
+    systemctl restart networking 2>/dev/null || true
+  fi
+
   log "OK" "Пакеты успешно установлены"
+}
+
+has_replacement_network_config() {
+  if [[ -f /etc/network/interfaces ]] \
+    && grep -Eq '^\s*(iface|auto)\s+' /etc/network/interfaces; then
+    return 0
+  fi
+  if compgen -G "/etc/network/interfaces.d/*" >/dev/null 2>&1; then
+    return 0
+  fi
+  if compgen -G "/etc/netplan/*.yaml" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
 
 disable_conflicting_services() {
@@ -66,7 +104,10 @@ disable_conflicting_services() {
 
   for svc in "${services[@]}"; do
     if systemctl list-unit-files | grep -q "^$svc.service"; then
-      if systemctl is-enabled --quiet "$svc"; then
+      if [[ "$svc" == "NetworkManager" || "$svc" == "systemd-networkd" ]] \
+        && ! has_replacement_network_config; then
+        log "WARN" "Пропуск отключения $svc: отсутствует конфигурация сети"
+      elif systemctl is-enabled --quiet "$svc"; then
         systemctl disable --now "$svc"
         log "OK" "$svc отключён"
         disabled+=("$svc")
