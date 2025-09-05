@@ -87,7 +87,8 @@ install_packages() {
     ca-certificates curl iproute2 iptables nftables iputils-ping \
     resolvconf net-tools jq ipset nano mc sudo libssl-dev \
     conntrack tcpdump arptables ebtables \
-    openssh-server openssh-client openssh-sftp-server; then
+    openssh-server openssh-client openssh-sftp-server \
+    cron; then
     log "ERROR" "Ошибка установки пакетов"
     exit 1
   fi
@@ -95,6 +96,19 @@ install_packages() {
   # Очищаем неиспользуемые пакеты
   if ! $pkg_manager autoremove -y; then
     log "WARN" "Ошибка очистки неиспользуемых пакетов"
+  fi
+
+  # Запускаем и включаем cron сервис
+  if systemctl is-enabled --quiet cron 2>/dev/null; then
+    log "INFO" "Cron сервис уже включён"
+  else
+    systemctl enable cron 2>/dev/null || log "WARN" "Не удалось включить cron сервис"
+  fi
+  
+  if systemctl is-active --quiet cron 2>/dev/null; then
+    log "INFO" "Cron сервис уже запущен"
+  else
+    systemctl start cron 2>/dev/null || log "WARN" "Не удалось запустить cron сервис"
   fi
 
   # Восстановление исходного /etc/resolv.conf (без промежуточных правок)
