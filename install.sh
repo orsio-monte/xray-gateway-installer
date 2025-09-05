@@ -114,6 +114,12 @@ main() {
   log "TITLE" "Старт скрипта"
 
   check_root
+  
+  # Определяем дистрибутив для дополнительной информации
+  if [[ -f /etc/os-release ]]; then
+    source /etc/os-release
+    log "INFO" "Обнаружена ОС: $PRETTY_NAME"
+  fi
 
   log SEP
   log HEADER "Загружено ${#LOADED_MODULES[@]} модулей:"

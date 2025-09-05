@@ -20,26 +20,44 @@ check_os_version() {
     exit 1
   fi
 
-  if [[ "$id" != "debian" ]]; then
-    log "ERROR" "Поддерживается только Debian. Обнаружено: $id"
-    exit 1
-  fi
-
-  if (( version < 12 )); then
-    log "ERROR" "Минимально поддерживаемая версия Debian — 12. Обнаружено: $VERSION_ID"
-    exit 1
-  fi
-
-  log "OK" "Проверка ОС — Debian $VERSION_ID"
+  # Поддержка Debian и Ubuntu
+  case "$id" in
+    "debian")
+      if (( version < 12 )); then
+        log "ERROR" "Минимально поддерживаемая версия Debian — 12. Обнаружено: $VERSION_ID"
+        exit 1
+      fi
+      log "OK" "Проверка ОС — Debian $VERSION_ID"
+      ;;
+    "ubuntu")
+      if (( version < 24 )); then
+        log "ERROR" "Минимально поддерживаемая версия Ubuntu — 24.04. Обнаружено: $VERSION_ID"
+        exit 1
+      fi
+      log "OK" "Проверка ОС — Ubuntu $VERSION_ID"
+      ;;
+    *)
+      log "ERROR" "Поддерживаются только Debian 12+ и Ubuntu 24.04+. Обнаружено: $id $VERSION_ID"
+      exit 1
+      ;;
+  esac
 }
 
 install_packages() {
   log "INFO" "Установка необходимых пакетов..."
 
-  if ! command -v apt >/dev/null 2>&1; then
-    log "ERROR" "apt не найден. Скрипт поддерживает только Debian-подобные системы с APT"
+  # Проверяем наличие пакетного менеджера
+  local pkg_manager=""
+  if command -v apt >/dev/null 2>&1; then
+    pkg_manager="apt"
+  elif command -v apt-get >/dev/null 2>&1; then
+    pkg_manager="apt-get"
+  else
+    log "ERROR" "Не найден пакетный менеджер APT. Скрипт поддерживает только Debian-подобные системы"
     exit 1
   fi
+
+  log "INFO" "Используется пакетный менеджер: $pkg_manager"
 
   # Бэкап resolv.conf без изменения содержимого и с сохранением типа (файл/симлинк)
   local resolv_backup
@@ -52,12 +70,32 @@ install_packages() {
   fi
 
   export DEBIAN_FRONTEND=noninteractive
-  apt update -y && apt upgrade -y && apt install -y \
+  
+  # Обновляем список пакетов и систему
+  if ! $pkg_manager update -y; then
+    log "ERROR" "Ошибка обновления списка пакетов"
+    exit 1
+  fi
+  
+  if ! $pkg_manager upgrade -y; then
+    log "ERROR" "Ошибка обновления системы"
+    exit 1
+  fi
+  
+  # Устанавливаем необходимые пакеты
+  if ! $pkg_manager install -y \
     ca-certificates curl iproute2 iptables nftables iputils-ping \
     resolvconf net-tools jq ipset nano mc sudo libssl-dev \
     conntrack tcpdump arptables ebtables \
-    openssh-server openssh-client openssh-sftp-server && \
-    apt autoremove -y
+    openssh-server openssh-client openssh-sftp-server; then
+    log "ERROR" "Ошибка установки пакетов"
+    exit 1
+  fi
+  
+  # Очищаем неиспользуемые пакеты
+  if ! $pkg_manager autoremove -y; then
+    log "WARN" "Ошибка очистки неиспользуемых пакетов"
+  fi
 
   # Восстановление исходного /etc/resolv.conf (без промежуточных правок)
   if [ -s "$resolv_backup" ] || [ -L "$resolv_backup" ]; then
@@ -69,6 +107,8 @@ install_packages() {
   # Обновим конфигурацию резолвера по возможности
   if command -v resolvconf >/dev/null 2>&1; then
     resolvconf -u || true
+  elif command -v netplan >/dev/null 2>&1 && [[ -d /etc/netplan ]]; then
+    netplan apply 2>/dev/null || true
   else
     systemctl restart networking 2>/dev/null || true
   fi
@@ -104,10 +144,15 @@ disable_conflicting_services() {
 
   for svc in "${services[@]}"; do
     if systemctl list-unit-files | grep -q "^$svc.service"; then
-      if [[ "$svc" == "NetworkManager" || "$svc" == "systemd-networkd" ]] \
-        && ! has_replacement_network_config; then
-        log "WARN" "Пропуск отключения $svc: отсутствует конфигурация сети"
-      elif systemctl is-enabled --quiet "$svc"; then
+      if [[ "$svc" == "NetworkManager" || "$svc" == "systemd-networkd" ]]; then
+        # В Ubuntu 24.04 может использоваться netplan, проверяем это
+        if ! has_replacement_network_config; then
+          log "WARN" "Пропуск отключения $svc: отсутствует конфигурация сети"
+          continue
+        fi
+      fi
+      
+      if systemctl is-enabled --quiet "$svc"; then
         systemctl disable --now "$svc"
         log "OK" "$svc отключён"
         disabled+=("$svc")

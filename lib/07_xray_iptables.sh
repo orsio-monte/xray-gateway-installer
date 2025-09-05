@@ -4,6 +4,12 @@
 force_use_iptables_legacy() {
   log "INFO" "Переключение iptables и родственных утилит на legacy-бэкенд"
 
+  # Проверяем наличие update-alternatives
+  if ! command -v update-alternatives >/dev/null 2>&1; then
+    log "ERROR" "update-alternatives не найден. Установите пакет dpkg"
+    exit 1
+  fi
+
   for tool in iptables ip6tables arptables ebtables; do
     local legacy_path="/usr/sbin/${tool}-legacy"
     if [[ -x "$legacy_path" ]]; then
@@ -23,33 +29,32 @@ force_use_iptables_legacy() {
   else
     log "OK" "iptables работает в режиме legacy"
   fi
+}
 
+validate_xray_configs() {
+  local bin="/usr/local/bin/xray"
+  local config_dir="$XRAY_JSONS_PATH"
 
-  validate_xray_configs() {
-    local bin="/usr/local/bin/xray"
-    local config_dir="$XRAY_JSONS_PATH"
+  log INFO "Проверка конфигурации Xray через \`$bin -test -confdir $config_dir\`..."
 
-    log INFO "Проверка конфигурации Xray через \`$bin -test -confdir $config_dir\`..."
+  if [[ ! -x "$bin" ]]; then
+    log ERROR "Не найден бинарник Xray: $bin"
+    return 1
+  fi
 
-    if [[ ! -x "$bin" ]]; then
-      log ERROR "Не найден бинарник Xray: $bin"
-      return 1
-    fi
+  if [[ ! -d "$config_dir" ]]; then
+    log ERROR "Каталог конфигурации не найден: $config_dir"
+    return 1
+  fi
 
-    if [[ ! -d "$config_dir" ]]; then
-      log ERROR "Каталог конфигурации не найден: $config_dir"
-      return 1
-    fi
-
-    if "$bin" run -test -confdir "$config_dir" &> >(tee /tmp/xray-test.log); then
-      log OK "Конфигурация Xray прошла проверку успешно"
-      return 0
-    else
-      log ERROR "Xray обнаружил ошибки в конфигурации:"
-      sed 's/^/    └─ /' /tmp/xray-test.log
-      return 1
-    fi
-  }
+  if "$bin" run -test -confdir "$config_dir" &> >(tee /tmp/xray-test.log); then
+    log OK "Конфигурация Xray прошла проверку успешно"
+    return 0
+  else
+    log ERROR "Xray обнаружил ошибки в конфигурации:"
+    sed 's/^/    └─ /' /tmp/xray-test.log
+    return 1
+  fi
 }
 
 

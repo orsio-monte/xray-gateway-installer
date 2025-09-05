@@ -9,7 +9,7 @@ configure_grub() {
   fi
 
   local distributor
-  distributor="$(lsb_release -i -s 2>/dev/null || echo Debian)"
+  distributor="$(lsb_release -i -s 2>/dev/null || echo "Unknown")"
   log "INFO" "Дистрибутив определён как: $distributor"
 
   # GRUB_DEFAULT и GRUB_TIMEOUT
@@ -46,8 +46,26 @@ configure_grub() {
     echo "GRUB_CMDLINE_LINUX=\"$kernel_cmdline\"" >> "$GRUB_FILE"
   fi
 
-  log "INFO" "Применение изменений: update-grub"
-  update-grub
-
-  log "OK" "GRUB успешно обновлён"
+  log "INFO" "Применение изменений GRUB"
+  
+  # Определяем команду обновления GRUB в зависимости от дистрибутива
+  local grub_update_cmd=""
+  if command -v update-grub >/dev/null 2>&1; then
+    grub_update_cmd="update-grub"
+  elif command -v grub-mkconfig >/dev/null 2>&1; then
+    grub_update_cmd="grub-mkconfig -o /boot/grub/grub.cfg"
+  elif command -v grub2-mkconfig >/dev/null 2>&1; then
+    grub_update_cmd="grub2-mkconfig -o /boot/grub2/grub.cfg"
+  else
+    log "ERROR" "Не найдена команда обновления GRUB"
+    exit 1
+  fi
+  
+  log "INFO" "Выполняется: $grub_update_cmd"
+  if eval "$grub_update_cmd"; then
+    log "OK" "GRUB успешно обновлён"
+  else
+    log "ERROR" "Ошибка обновления GRUB"
+    exit 1
+  fi
 }

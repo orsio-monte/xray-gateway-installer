@@ -60,6 +60,7 @@ EOF
   for f in /etc/network/interfaces.d/*; do files_to_edit+=("$f"); done
   shopt -u nullglob
 
+  # Обновляем файлы конфигурации сети
   local f
   for f in "${files_to_edit[@]}"; do
     cp -a "$f" "$f.bak.$now_utc"
@@ -70,10 +71,29 @@ EOF
     log "INFO" "Обновлён $f"
   done
 
+  # Обновляем netplan конфигурации (Ubuntu)
+  shopt -s nullglob
+  for netplan_file in /etc/netplan/*.yaml; do
+    if [[ -f "$netplan_file" ]]; then
+      cp -a "$netplan_file" "$netplan_file.bak.$now_utc"
+      sed -ri "s/\b$iface\b/$target_name/g" "$netplan_file"
+      log "INFO" "Обновлён netplan файл: $netplan_file"
+    fi
+  done
+  shopt -u nullglob
+
   ip link set dev "$iface" down 2>/dev/null || true
   if ip link set dev "$iface" name "$target_name"; then
     ip link set dev "$target_name" up 2>/dev/null || true
-    systemctl restart networking 2>/dev/null || true
+    
+    # Перезапускаем сетевые сервисы в зависимости от конфигурации
+    if command -v netplan >/dev/null 2>&1 && [[ -d /etc/netplan ]]; then
+      log "INFO" "Применение изменений netplan"
+      netplan apply 2>/dev/null || true
+    else
+      systemctl restart networking 2>/dev/null || true
+    fi
+    
     log "OK" "Интерфейс переименован в $target_name"
   else
     log "WARN" "Онлайн-переименование не удалось, изменения применятся после перезагрузки"
